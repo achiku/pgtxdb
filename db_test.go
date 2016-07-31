@@ -32,8 +32,8 @@ func TestShouldRunWithinTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to count users: %s", err)
 	}
-	if count != 4 {
-		t.Fatalf("expected 4 user to be in database, but got %d", count)
+	if count != 1 {
+		t.Fatalf("expected 1 user to be in database, but got %d", count)
 	}
 
 	db2, err := sql.Open("pgtxdb", "two")
@@ -46,8 +46,8 @@ func TestShouldRunWithinTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to count app_user: %s", err)
 	}
-	if count != 3 {
-		t.Fatalf("expected 3 user to be in database, but got %d", count)
+	if count != 0 {
+		t.Fatalf("expected 0 user to be in database, but got %d", count)
 	}
 }
 
@@ -105,8 +105,8 @@ func TestShouldPerformParallelActions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to count users: %s", err)
 	}
-	if count != 7 {
-		t.Fatalf("expected 7 users to be in database, but got %d", count)
+	if count != 4 {
+		t.Fatalf("expected 4 users to be in database, but got %d", count)
 	}
 }
 
@@ -127,6 +127,10 @@ func TestShouldHandlePrepare(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not prepare - %s", err)
 	}
+	_, err = stmt2.Exec("jane", "jane@gmail.com")
+	if err != nil {
+		t.Fatalf("should have inserted user - %s", err)
+	}
 
 	var email string
 	if err = stmt1.QueryRow("jane").Scan(&email); err != nil {
@@ -136,5 +140,56 @@ func TestShouldHandlePrepare(t *testing.T) {
 	_, err = stmt2.Exec("mark", "mark.spencer@gmail.com")
 	if err != nil {
 		t.Fatalf("should have inserted user - %s", err)
+	}
+}
+
+func rollbackTest(t *testing.T, db *sql.DB) error {
+	tx1, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx1.Rollback()
+	_, err = tx1.Exec(`INSERT INTO app_user(username, email) VALUES ('taro', 'taro@gmail.com')`)
+	if err != nil {
+		t.Logf("failed to insert the first taro record: %s", err)
+		return err
+	}
+	tx1.Commit()
+
+	tx2, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx2.Rollback()
+	_, err = tx2.Exec(`INSERT INTO app_user(username, email) VALUES ('taro', 'taro@gmail.com')`)
+	if err != nil {
+		t.Logf("successfully failed to insert the second taro record: %s", err)
+		return err
+	}
+	tx2.Commit()
+	return nil
+}
+
+func TestSavepointRollback(t *testing.T) {
+	t.Parallel()
+	db, err := sql.Open("pgtxdb", "three")
+	if err != nil {
+		t.Fatalf("failed to open a postgres connection, have you run 'make test'? err: %s", err)
+	}
+	defer db.Close()
+
+	// rollbackTest has to return error since it trys to insert a duplicate record.
+	// although it returns error, inside it's function the first record is commited.
+	if err := rollbackTest(t, db); err == nil {
+		t.Fatal(err)
+	}
+	// Thus, we can retreive a record from db scope
+	var count int
+	err = db.QueryRow(`SELECT count(*) FROM app_user WHERE username = 'taro'`).Scan(&count)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 user with username taro, but got %d", count)
 	}
 }

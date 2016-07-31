@@ -16,18 +16,13 @@ func TestMain(m *testing.M) {
 		log.Fatalf("failed to connect test db: %s", err.Error())
 	}
 	_, err = db.Exec(`
-	CREATE TABLE app_user (
+	CREATE TABLE IF NOT EXISTS app_user (
 	  id BIGSERIAL NOT NULL,
 	  username TEXT NOT NULL,
 	  email TEXT NOT NULL,
 	  PRIMARY KEY (id),
 	  UNIQUE (email)
 	);
-	INSERT INTO app_user (username, email) VALUES 
-	    ('gopher', 'gopher@go.com'),
-	    ('john', 'john@doe.com'),
-	    ('jane', 'jane@doe.com')
-	;
 	`)
 	if err != nil {
 		log.Fatalf("failed to create test table: %s", err.Error())

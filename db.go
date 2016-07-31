@@ -1,5 +1,5 @@
 /*
-Package txdb is a single transaction based database sql driver. When the connection
+Package pgtxdb is a single transaction based database sql driver. When the connection
 is opened, it starts a transaction and all operations performed on this *sql.DB
 will be within that transaction. If concurrent actions are performed, the lock is
 acquired and connection is always released the statements and rows are not holding the
@@ -55,8 +55,11 @@ package pgtxdb
 import (
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"io"
 	"sync"
+
+	"github.com/pkg/errors"
 )
 
 // Register a txdb sql driver under the given sql driver name
@@ -87,10 +90,11 @@ func Register(name, drv, dsn string) {
 // when the Close is called, transaction is rolled back
 type conn struct {
 	sync.Mutex
-	tx     *sql.Tx
-	dsn    string
-	opened int
-	drv    *txDriver
+	tx         *sql.Tx
+	dsn        string
+	opened     int
+	drv        *txDriver
+	savepoints []int
 }
 
 type txDriver struct {
@@ -116,7 +120,7 @@ func (d *txDriver) Open(dsn string) (driver.Conn, error) {
 	}
 	c, ok := d.conns[dsn]
 	if !ok {
-		c = &conn{dsn: dsn, drv: d}
+		c = &conn{dsn: dsn, drv: d, savepoints: []int{0}}
 		c.tx, err = d.db.Begin()
 		d.conns[dsn] = c
 	}
@@ -140,6 +144,13 @@ func (c *conn) Close() (err error) {
 }
 
 func (c *conn) Begin() (driver.Tx, error) {
+	savepointID := len(c.savepoints)
+	c.savepoints = append(c.savepoints, savepointID)
+	sql := fmt.Sprintf("SAVEPOINT pgtxdb_%d", savepointID)
+	_, err := c.tx.Exec(sql)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create savepoint")
+	}
 	return c, nil
 }
 
@@ -148,6 +159,13 @@ func (c *conn) Commit() error {
 }
 
 func (c *conn) Rollback() error {
+	savepointID := c.savepoints[len(c.savepoints)-1]
+	c.savepoints = c.savepoints[:len(c.savepoints)-1]
+	sql := fmt.Sprintf("ROLLBACK TO SAVEPOINT pgtxdb_%d", savepointID)
+	_, err := c.tx.Exec(sql)
+	if err != nil {
+		return errors.Wrap(err, "failed to rollback to savepoint")
+	}
 	return nil
 }
 
