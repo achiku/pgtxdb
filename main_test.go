@@ -23,6 +23,11 @@ func TestMain(m *testing.M) {
 	  PRIMARY KEY (id),
 	  UNIQUE (email)
 	);
+	CREATE TABLE IF NOT EXISTS error_event (
+	  id BIGSERIAL NOT NULL,
+	  message TEXT NOT NULL,
+	  UNIQUE (id)
+	);
 	`)
 	if err != nil {
 		log.Fatalf("failed to create test table: %s", err.Error())
@@ -30,6 +35,7 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	_, err = db.Exec(`
 	DROP TABLE IF EXISTS app_user;
+	DROP TABLE IF EXISTS error_event;
 	`)
 	if err != nil {
 		log.Fatalf("failed to create test table: %s", err.Error())

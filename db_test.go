@@ -112,7 +112,7 @@ func TestShouldPerformParallelActions(t *testing.T) {
 
 func TestShouldHandlePrepare(t *testing.T) {
 	t.Parallel()
-	db, err := sql.Open("pgtxdb", "three")
+	db, err := sql.Open("pgtxdb", "five")
 	if err != nil {
 		t.Fatalf("failed to open a postgres connection, have you run 'make test'? err: %s", err)
 	}
@@ -143,7 +143,7 @@ func TestShouldHandlePrepare(t *testing.T) {
 	}
 }
 
-func rollbackTest(t *testing.T, db *sql.DB) error {
+func sequentialRollbackTest(t *testing.T, db *sql.DB) error {
 	tx1, err := db.Begin()
 	if err != nil {
 		return err
@@ -170,9 +170,9 @@ func rollbackTest(t *testing.T, db *sql.DB) error {
 	return nil
 }
 
-func TestSavepointRollback(t *testing.T) {
+func TestSavepointRollbackSequential(t *testing.T) {
 	t.Parallel()
-	db, err := sql.Open("pgtxdb", "three")
+	db, err := sql.Open("pgtxdb", "six")
 	if err != nil {
 		t.Fatalf("failed to open a postgres connection, have you run 'make test'? err: %s", err)
 	}
@@ -180,7 +180,7 @@ func TestSavepointRollback(t *testing.T) {
 
 	// rollbackTest has to return error since it trys to insert a duplicate record.
 	// although it returns error, inside it's function the first record is commited.
-	if err := rollbackTest(t, db); err == nil {
+	if err := sequentialRollbackTest(t, db); err == nil {
 		t.Fatal(err)
 	}
 	// Thus, we can retreive a record from db scope
@@ -191,5 +191,88 @@ func TestSavepointRollback(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("expected 1 user with username taro, but got %d", count)
+	}
+}
+
+func nestedRollbackTest(t *testing.T, db *sql.DB) error {
+	tx1, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx1.Rollback()
+	t.Log("tx1 started")
+	_, err = tx1.Exec(`INSERT INTO app_user(username, email) VALUES ('taro', 'taro@gmail.com')`)
+	if err != nil {
+		t.Logf("failed to insert the first taro record: %s", err)
+		return err
+	}
+	tx1.Commit()
+	t.Log("tx1 commited")
+
+	tx2, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx2.Rollback()
+	t.Log("tx2 started")
+
+	_, err = tx2.Exec(`INSERT INTO app_user(username, email) VALUES ('taro', 'taro@gmail.com')`)
+	if err != nil {
+		if eventErr := createErrorEventWithTx(t, tx2, db); eventErr != nil {
+			return fmt.Errorf("createErrorEvent failed %s", eventErr)
+		}
+		return err
+	}
+	tx2.Commit()
+	return nil
+}
+
+func createErrorEventWithTx(t *testing.T, prevTx *sql.Tx, db *sql.DB) error {
+	// need to rollback error tx before starting new tx
+	prevTx.Rollback()
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	t.Log("error event tx started")
+	_, err = tx.Exec(`INSERT INTO error_event (message) values ('error creating app_user')`)
+	if err != nil {
+		return err
+	}
+	tx.Commit()
+	t.Log("error event tx commited")
+	return nil
+}
+
+func TestSavepointRollbackNested(t *testing.T) {
+	t.Parallel()
+	db, err := sql.Open("pgtxdb", "seven")
+	if err != nil {
+		t.Fatalf("failed to open a postgres connection, have you run 'make test'? err: %s", err)
+	}
+	defer db.Close()
+
+	if err := nestedRollbackTest(t, db); err == nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	err = db.QueryRow(`SELECT count(*) FROM app_user WHERE username = 'taro'`).Scan(&count)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 user with username taro, but got %d", count)
+	}
+	var errCount int
+	err = db.QueryRow(`SELECT count(*) FROM error_event`).Scan(&errCount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errCount != 1 {
+		t.Errorf("expected 1 error event, but got %d", errCount)
 	}
 }
