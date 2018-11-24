@@ -11,7 +11,7 @@ import (
 
 // TestMain service package setup/teardonw
 func TestMain(m *testing.M) {
-	db, err := sql.Open("postgres", "user=pgtest dbname=pgtest sslmode=disable")
+	db, err := sql.Open("postgres", "user=pgtxdbtest dbname=pgtxdbtest sslmode=disable")
 	if err != nil {
 		log.Fatalf("failed to connect test db: %s", err.Error())
 	}

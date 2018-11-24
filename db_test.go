@@ -12,7 +12,7 @@ import (
 
 func init() {
 	// we register an sql driver txdb
-	Register("pgtxdb", "postgres", "user=pgtest dbname=pgtest sslmode=disable")
+	Register("pgtxdb", "postgres", "user=pgtxdbtest dbname=pgtxdbtest sslmode=disable")
 }
 
 func TestShouldRunWithinTransaction(t *testing.T) {
