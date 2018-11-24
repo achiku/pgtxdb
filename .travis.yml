@@ -1,15 +1,15 @@
 language: go
 
 go:
-  - 1.6
+  - 1.11
   - tip
 
 services:
   - postgresql
 
 before_script:
-  - psql -c 'CREATE USER pgtest;' -U postgres
-  - psql -c 'CREATE DATABASE pgtest OWNER pgtest;' -U postgres
+  - psql -c 'CREATE USER pgtxdbtest;' -U postgres
+  - psql -c 'CREATE DATABASE pgtxdbtest OWNER pgtxdbtest;' -U postgres
 
 script:
   - go get -u github.com/mattn/gom 
