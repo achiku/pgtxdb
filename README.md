@@ -12,3 +12,13 @@ Single transaction sql driver for Golang x PostgreSQL. This is almost clone of [
 - `tx.Commit()` does nothing.
 - `ROLLBACK TO SAVEPOINT pgtxdb_xxx;` will be executed upon `tx.Rollback()` call so that it can emulate transaction rollback.
 - Above features enable us to emulate multiple transactions in one test case.
+
+
+## Run test
+
+Make sure PostgreSQL is running.
+
+```
+create database pgtxdbtest;
+create user pgtxdbtest;
+```

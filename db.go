@@ -1,6 +1,6 @@
 /*
-Package pgtxdb is a single transaction based database sql driver. When the connection
-is opened, it starts a transaction and all operations performed on this *sql.DB
+Package pgtxdb is a single transaction based database sql driver for PostgreSQL.
+When the connection is opened, it starts a transaction and all operations performed on this *sql.DB
 will be within that transaction. If concurrent actions are performed, the lock is
 acquired and connection is always released the statements and rows are not holding the
 connection.
@@ -72,8 +72,10 @@ import (
 //
 // When Close is called, the transaction is rolled back.
 //
-// Use drv and dsn as the standard sql properties for
+// Use drv (Driver) and dsn (DataSourceName) as the standard sql properties for
 // your test database connection to be isolated within transaction.
+//
+// The drv and dsn are the same items passed into `sql.Open(drv, dsn)`.
 //
 // Note: if you open a secondary database, make sure to differianciate
 // the dsn string when opening the sql.DB. The transaction will be
@@ -174,31 +176,47 @@ func (c *conn) Prepare(query string) (driver.Stmt, error) {
 	defer c.Unlock()
 
 	st, err := c.tx.Prepare(query)
-	if err == nil {
-		st.Close()
-	}
-	return &stmt{query: query, conn: c}, err
-}
-
-type stmt struct {
-	query string
-	conn  *conn
-}
-
-func (s *stmt) Exec(args []driver.Value) (driver.Result, error) {
-	s.conn.Lock()
-	defer s.conn.Unlock()
-
-	st, err := s.conn.tx.Prepare(s.query)
 	if err != nil {
 		return nil, err
 	}
-	defer st.Close()
-	var iargs []interface{}
-	for _, arg := range args {
-		iargs = append(iargs, arg)
+	return &stmt{st: st}, nil
+}
+
+func (c *conn) Exec(query string, args []driver.Value) (driver.Result, error) {
+	c.Lock()
+	defer c.Unlock()
+
+	return c.tx.Exec(query, mapArgs(args)...)
+}
+
+func mapArgs(args []driver.Value) (res []interface{}) {
+	res = make([]interface{}, len(args))
+	for i := range args {
+		res[i] = args[i]
 	}
-	return st.Exec(iargs...)
+	return
+}
+
+func (c *conn) Query(query string, args []driver.Value) (driver.Rows, error) {
+	c.Lock()
+	defer c.Unlock()
+
+	// query rows
+	rs, err := c.tx.Query(query, mapArgs(args)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rs.Close()
+
+	return buildRows(rs)
+}
+
+type stmt struct {
+	st *sql.Stmt
+}
+
+func (s *stmt) Exec(args []driver.Value) (driver.Result, error) {
+	return s.st.Exec(mapArgs(args)...)
 }
 
 func (s *stmt) NumInput() int {
@@ -206,55 +224,15 @@ func (s *stmt) NumInput() int {
 }
 
 func (s *stmt) Close() error {
-	return nil
+	return s.st.Close()
 }
 
 func (s *stmt) Query(args []driver.Value) (driver.Rows, error) {
-	s.conn.Lock()
-	defer s.conn.Unlock()
-
-	// create stement
-	st, err := s.conn.tx.Prepare(s.query)
+	rows, err := s.st.Query(mapArgs(args)...)
 	if err != nil {
 		return nil, err
 	}
-	defer st.Close()
-
-	// query rows
-	var iargs []interface{}
-	for _, arg := range args {
-		iargs = append(iargs, arg)
-	}
-	rs, err := st.Query(iargs...)
-	if err != nil {
-		return nil, err
-	}
-	defer rs.Close()
-
-	// build all rows in memory, prevent statement lock
-	rows := &rows{}
-	rows.cols, err = rs.Columns()
-	if err != nil {
-		return nil, err
-	}
-	for rs.Next() {
-		values := make([]interface{}, len(rows.cols))
-		for i := range values {
-			values[i] = new(interface{})
-		}
-		if err := rs.Scan(values...); err != nil {
-			return rows, err
-		}
-		row := make([]driver.Value, len(rows.cols))
-		for i, v := range values {
-			row[i] = driver.Value(v)
-		}
-		rows.rows = append(rows.rows, row)
-	}
-	if err := rs.Err(); err != nil {
-		return rows, err
-	}
-	return rows, nil
+	return buildRows(rows)
 }
 
 type rows struct {
@@ -282,4 +260,45 @@ func (r *rows) Next(dest []driver.Value) error {
 
 func (r *rows) Close() error {
 	return nil
+}
+
+func (r *rows) read(rs *sql.Rows) error {
+	var err error
+	r.cols, err = rs.Columns()
+	if err != nil {
+		return err
+	}
+	for rs.Next() {
+		values := make([]interface{}, len(r.cols))
+		for i := range values {
+			values[i] = new(interface{})
+		}
+		if err := rs.Scan(values...); err != nil {
+			return err
+		}
+		row := make([]driver.Value, len(r.cols))
+		for i, v := range values {
+			row[i] = driver.Value(v)
+		}
+		r.rows = append(r.rows, row)
+	}
+	return rs.Err()
+}
+
+type rowSets struct {
+	sets []*rows
+	pos  int
+}
+
+func (rs *rowSets) Columns() []string {
+	return rs.sets[rs.pos].cols
+}
+
+func (rs *rowSets) Close() error {
+	return nil
+}
+
+// advances to next row
+func (rs *rowSets) Next(dest []driver.Value) error {
+	return rs.sets[rs.pos].Next(dest)
 }
