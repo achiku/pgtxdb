@@ -22,3 +22,5 @@ Make sure PostgreSQL is running.
 create database pgtxdbtest;
 create user pgtxdbtest;
 ```
+
+If you have Docker installed on your machine, run `make test`.
