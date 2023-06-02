@@ -1,0 +1,43 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+        go:
+          - "1.20"
+          - "1.19"
+          - "1.18"
+    services:
+      postgres:
+        image: postgres:12
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+      - name: Prepare DB
+        run: |
+          psql -U postgres -h localhost -d postgres -c 'CREATE USER pgtxdbtest;'
+          psql -U postgres -h localhost -d postgres -c 'CREATE DATABASE pgtxdbtest OWNER pgtxdbtest;'
+      - name: Install Go
+        uses: actions/setup-go/@v2
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Checkout code
+        uses: actions/checkout/@v2
+
+      - name: Run test
+        run: go test -v
+
